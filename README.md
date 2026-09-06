@@ -7,11 +7,24 @@
 
 - 只用 Python 标准库，Mac 自带 `python3` 就能跑，不需要 pip 安装
 - 不修改现有项目，只读取项目的 `data/` 目录（JSON 与 SQLite 都会扫）
-- 调试页面跑在 8010 端口，和现有的 8000 网站互不影响
+- 控制台跑在 8010 端口，只监听 127.0.0.1，和现有的 8000 网站互不影响
+- API Key 只写进本机 `data/riot_secret.json`（权限 600），页面上只显示遮蔽形式
 
 ## 快速开始
 
-**完整的零基础分步操作指南请看 [docs/使用说明.md](docs/使用说明.md)。**
+**零基础分步操作指南（推荐先看这个）：[docs/使用说明.md](docs/使用说明.md)**
+
+只需要一条命令，其余全部在浏览器里点：
+
+```bash
+python3 -m lolab serve      # 打开 http://127.0.0.1:8010
+```
+
+网页控制台上可以：选数据目录（支持自动查找）、填 / 验证 Riot API Key、
+按 Riot ID 同步最近 N 场（**Match 和 Timeline 两个接口都抓**）、
+单场补下载 Timeline、逐分钟核对 State。
+
+也可以全部用终端：
 
 ```bash
 python3 -m lolab where  --data "你的项目/data"        # 认的是哪个 data 目录
@@ -19,7 +32,6 @@ python3 -m lolab check  KR_8368663855                # Timeline 完整性检查
 python3 -m lolab fetch  KR_8368663855                # 从 Riot API 补下载
 python3 -m lolab items                               # 更新装备价格表
 python3 -m lolab state  KR_8368663855 --minute 10    # Timeline → 分钟级 State
-python3 -m lolab serve                               # 调试页面 127.0.0.1:8010
 python3 -m lolab huya   "虎牙录像地址" --workers 3     # 录像下载（批量 / 并发）
 ```
 
@@ -33,7 +45,8 @@ python3 -m lolab huya   "虎牙录像地址" --workers 3     # 录像下载（�
 | `riot.py` | Riot API 最小客户端（Key 只从本机读，绝不打印） |
 | `ddragon.py` | Data Dragon 装备价格表，用于计算装备价值 |
 | `state.py` | **Timeline → 分钟级 State**，严格无未来信息泄漏 |
-| `server.py` + `web/` | Timeline / State 调试页面 |
+| `server.py` + `web/console.html` | 网页控制台：数据目录 / API Key / 同步 / 补下载 |
+| `web/debug.html` | Timeline / State 逐分钟调试页（含小地图） |
 | `huya.py` | 虎牙录像 URL → m3u8 → 最高画质 → FFmpeg → MP4 |
 
 ## 关于「无未来信息泄漏」

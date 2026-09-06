@@ -196,3 +196,136 @@ def save(data_dir: Path, kind: str, match_id: str, obj: dict[str, Any]) -> Path:
     with path.open("w", encoding="utf-8") as handle:
         json.dump(obj, handle, ensure_ascii=False)
     return path
+
+
+# ---------------------------------------------------------------- 快速盘点
+
+# 只读文件开头这么多字节来判断类型，避免为了列个清单去解析几百 MB 的 Timeline
+_PEEK_BYTES = 16 * 1024
+
+
+def _peek_kind(path: Path) -> str | None:
+    """只读文件开头，快速判断是 Match 还是 Timeline。判断不了返回 None。"""
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(_PEEK_BYTES).decode("utf-8", errors="ignore")
+    except OSError:
+        return None
+    if '"frameInterval"' in head or '"frames"' in head or '"participantFrames"' in head:
+        return "timeline"
+    if '"gameDuration"' in head or '"gameCreation"' in head:
+        return "match"
+    return None
+
+
+def inventory(data_dir: Path) -> dict[str, Any]:
+    """盘点 data/ 里有哪些比赛、每场的 Match / Timeline 齐不齐。
+
+    为了快，优先用「文件名 + 开头几 KB」判断；判断不出来的才整份解析。
+    """
+    matches: dict[str, str] = {}   # matchId -> 文件路径
+    timelines: dict[str, str] = {}
+    unknown: list[str] = []
+
+    for path in _iter_json_files(data_dir):
+        match_id = _guess_id_from_name(path)
+        kind = _peek_kind(path)
+
+        if match_id is None or kind is None:
+            # 文件名或开头看不出来，才老老实实整份解析
+            try:
+                with path.open("r", encoding="utf-8") as handle:
+                    obj = json.load(handle)
+            except (OSError, ValueError, UnicodeDecodeError):
+                continue
+            for candidate in _unwrap(obj):
+                kind = classify(candidate)
+                if kind:
+                    match_id = match_id_of(candidate) or match_id
+                    break
+            if not kind or not match_id:
+                unknown.append(str(path))
+                continue
+
+        target = timelines if kind == "timeline" else matches
+        target.setdefault(match_id, str(path))
+
+    db_files = sorted(
+        {
+            str(p)
+            for pattern in ("*.db", "*.sqlite", "*.sqlite3")
+            for p in data_dir.rglob(pattern)
+        }
+    )
+
+    all_ids = sorted(set(matches) | set(timelines), reverse=True)
+    return {
+        "matches": [
+            {
+                "matchId": mid,
+                "hasMatch": mid in matches,
+                "hasTimeline": mid in timelines,
+            }
+            for mid in all_ids
+        ],
+        "total": len(all_ids),
+        "withTimeline": sum(1 for mid in all_ids if mid in timelines),
+        "withoutTimeline": sum(1 for mid in all_ids if mid not in timelines),
+        "unreadableJson": unknown[:20],
+        "sqliteFiles": db_files,
+    }
+
+
+def find_data_dir_candidates(home: Path | None = None, max_depth: int = 5) -> list[dict[str, Any]]:
+    """在个人文件夹里找可能是项目 data 目录的地方，供网页上一键选择。"""
+    home = home or Path.home()
+    skip = {
+        "Library", "Applications", "Pictures", "Music", "Movies",
+        "node_modules", "__pycache__", "venv", ".venv", "site-packages",
+    }
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def walk(directory: Path, depth: int) -> None:
+        if depth > max_depth:
+            return
+        try:
+            entries = list(directory.iterdir())
+        except (OSError, PermissionError):
+            return
+        for entry in entries:
+            if not entry.is_dir() or entry.name.startswith(".") or entry.name in skip:
+                continue
+            if entry.name in _CANDIDATE_NAMES:
+                key = str(entry.resolve())
+                if key not in seen:
+                    seen.add(key)
+                    out.append(_describe_candidate(entry))
+            walk(entry, depth + 1)
+
+    walk(home, 0)
+    out.sort(key=lambda c: (-c["score"], c["path"]))
+    return out[:20]
+
+
+_CANDIDATE_NAMES = {"data", "Data", "storage", "var"}
+
+
+def _describe_candidate(directory: Path) -> dict[str, Any]:
+    """给一个候选目录打分：有 riot_secret.json 的最像，其次是有一堆 JSON 的。"""
+    has_secret = (directory / "riot_secret.json").is_file()
+    json_count = 0
+    try:
+        for path in directory.rglob("*.json"):
+            json_count += 1
+            if json_count >= 500:
+                break
+    except (OSError, PermissionError):
+        pass
+    score = (100 if has_secret else 0) + min(json_count, 50)
+    return {
+        "path": str(directory),
+        "hasSecret": has_secret,
+        "jsonCount": json_count,
+        "score": score,
+    }

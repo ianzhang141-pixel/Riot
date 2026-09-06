@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -124,3 +125,86 @@ def guess_region(match_id: str) -> str:
         "ME1": "europe",
     }
     return mapping.get(platform, "asia")
+
+
+# ---------------------------------------------------------------- 更多接口
+
+# Riot ID 大区路由 → 平台主机（Summoner/Status 这类接口要用平台主机）
+PLATFORM_HOSTS = {
+    "KR": "kr", "JP1": "jp1", "NA1": "na1", "BR1": "br1", "LA1": "la1",
+    "LA2": "la2", "OC1": "oc1", "EUW1": "euw1", "EUN1": "eun1",
+    "TR1": "tr1", "RU": "ru", "PH2": "ph2", "SG2": "sg2", "TH2": "th2",
+    "TW2": "tw2", "VN2": "vn2", "ME1": "me1",
+}
+
+
+def verify_key(api_key: str, platform: str = "KR") -> dict[str, Any]:
+    """用一个最轻量的接口验证 Key 是否有效。成功返回大区状态。"""
+    host = PLATFORM_HOSTS.get(platform.upper(), "kr")
+    url = f"https://{host}.api.riotgames.com/lol/status/v4/platform-data"
+    return get(url, api_key, retries=1)
+
+
+def fetch_account(region: str, game_name: str, tag_line: str, api_key: str) -> dict[str, Any]:
+    """Riot ID（名字#标签）→ 账号信息（含 PUUID）。"""
+    name = urllib.parse.quote(game_name, safe="")
+    tag = urllib.parse.quote(tag_line, safe="")
+    url = (
+        f"https://{region}.api.riotgames.com"
+        f"/riot/account/v1/accounts/by-riot-id/{name}/{tag}"
+    )
+    return get(url, api_key, retries=2)
+
+
+def fetch_match_ids(
+    region: str,
+    puuid: str,
+    api_key: str,
+    count: int = 20,
+    queue: int | None = 420,
+    start: int = 0,
+) -> list[str]:
+    """PUUID → 最近 N 场的 matchId 列表。queue=420 是排位 Solo/Duo。"""
+    params = {"start": start, "count": max(1, min(100, count))}
+    if queue:
+        params["queue"] = queue
+    url = (
+        f"https://{region}.api.riotgames.com"
+        f"/lol/match/v5/matches/by-puuid/{puuid}/ids?"
+        + urllib.parse.urlencode(params)
+    )
+    return get(url, api_key, retries=3)
+
+
+def save_api_key(data_dir: Path, key: str) -> Path:
+    """把 Key 写进 data/riot_secret.json（和现有网站用的是同一个文件）。"""
+    key = key.strip()
+    if not key:
+        raise RiotError(0, "Key 是空的。")
+    path = data_dir / "riot_secret.json"
+    existing: dict[str, Any] = {}
+    if path.is_file():
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                loaded = json.load(handle)
+            if isinstance(loaded, dict):
+                existing = loaded
+        except (OSError, ValueError):
+            existing = {}
+    existing["key"] = key
+    existing["savedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    data_dir.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(existing, handle, ensure_ascii=False, indent=2)
+    try:
+        path.chmod(0o600)  # 只有你自己能读
+    except OSError:
+        pass
+    return path
+
+
+def mask(key: str) -> str:
+    """给人看的遮蔽形式，永远不暴露完整 Key。"""
+    if not key:
+        return ""
+    return f"{key[:9]}…{key[-4:]}" if len(key) > 16 else "已保存"
