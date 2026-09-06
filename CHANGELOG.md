@@ -6,6 +6,40 @@
 
 ---
 
+## 2026-09-06 · 修复 Mac 上的 CERTIFICATE_VERIFY_FAILED
+
+**现象**
+
+用户在 Mac 上点「开始同步」，日志显示：
+`RiotError: 请求失败（已重试 2 次）：<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED]
+certificate verify failed: unable to get local issuer certificate>`
+
+**原因**
+
+Mac 上的 Python 默认不读系统钥匙串里的根证书，标准库 `urllib` 因此拒绝所有
+HTTPS 连接。GPT 那套用 `httpx`（自带 certifi）所以不受影响，`lolab` 用标准库就中招。
+
+**修复**
+
+新增 `lolab/net.py`：按 certifi → 系统默认 → macOS 常见证书路径的顺序构造
+SSLContext，并缓存结果。`riot.py` / `ddragon.py` / `huya.py` 的所有联网调用改走它。
+
+`riot.get()` 另外识别证书类错误后**不再无谓重试 4 次**，直接抛出中文解决指引
+（装 certifi 或运行 Install Certificates.command）。
+
+**没有做的事**
+
+没有关闭证书校验。`ssl_context()` 一个 CA 都找不到时会返回正常校验的 context
+让它照常报错，而不是静默降级成不校验 —— 那等于把 HTTPS 的安全性关掉。
+已验证返回的 context 是 CERT_REQUIRED、137 个 CA。
+
+**验证**
+
+全部模块编译通过；证书错误识别正确；控制台 4 个接口仍返回 200；
+非证书类的网络错误仍走原来的重试路径。
+
+---
+
 ## 2026-09-06 · 交接文档与终端入门指南
 
 **新增**

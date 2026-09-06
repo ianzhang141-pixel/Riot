@@ -9,6 +9,8 @@ import json
 import urllib.request
 from pathlib import Path
 
+from . import net
+
 _VERSIONS_URL = "https://ddragon.leagueoflegends.com/api/versions.json"
 _ITEMS_URL = "https://ddragon.leagueoflegends.com/cdn/{version}/data/en_US/item.json"
 
@@ -33,11 +35,13 @@ def load(data_dir: Path) -> dict[int, int]:
 
 def update(data_dir: Path) -> tuple[str, int]:
     """联网抓取最新版本的装备价格并缓存。返回 (版本号, 装备数量)。"""
-    with urllib.request.urlopen(_VERSIONS_URL, timeout=30) as response:
+    with net.urlopen(urllib.request.Request(_VERSIONS_URL), timeout=30) as response:
         versions = json.loads(response.read().decode("utf-8"))
     version = versions[0]
 
-    with urllib.request.urlopen(_ITEMS_URL.format(version=version), timeout=60) as response:
+    with net.urlopen(
+        urllib.request.Request(_ITEMS_URL.format(version=version)), timeout=60
+    ) as response:
         items = json.loads(response.read().decode("utf-8"))
 
     costs = {

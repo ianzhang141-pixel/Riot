@@ -14,6 +14,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from . import net
+
 # Riot ID 的大区路由（Regional Route），KR 属于 asia
 REGIONAL_ROUTES = ("americas", "asia", "europe", "sea")
 
@@ -68,7 +70,7 @@ def get(url: str, api_key: str, retries: int = 4) -> Any:
     for attempt in range(retries):
         request = urllib.request.Request(url, headers={"X-Riot-Token": api_key})
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
+            with net.urlopen(request, timeout=30) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as err:
             if err.code == 429:
@@ -82,8 +84,13 @@ def get(url: str, api_key: str, retries: int = 4) -> Any:
                 continue
             raise RiotError(err.code, _explain(err.code, url)) from err
         except urllib.error.URLError as err:
+            # 证书问题重试多少次都一样，直接给出解决办法
+            if net.is_cert_error(err):
+                raise RiotError(0, net.CERT_HELP) from err
             time.sleep(2 ** attempt)
             last = err
+    if last is not None and net.is_cert_error(last):
+        raise RiotError(0, net.CERT_HELP)
     raise RiotError(0, f"请求失败（已重试 {retries} 次）：{last}")
 
 

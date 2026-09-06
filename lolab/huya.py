@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
+from . import net
+
 _UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
@@ -65,7 +67,7 @@ def _fetch(url: str, timeout: int = 30) -> str:
     request = urllib.request.Request(
         url, headers={"User-Agent": _UA, "Referer": "https://v.huya.com/"}
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with net.urlopen(request, timeout=timeout) as response:
         raw = response.read()
     for encoding in ("utf-8", "gbk", "latin-1"):
         try:
