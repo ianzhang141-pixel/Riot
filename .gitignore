@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.DS_Store
+data/
+*.mp4
+*.m3u8
+riot_secret.json
