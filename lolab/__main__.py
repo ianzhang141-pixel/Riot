@@ -139,6 +139,25 @@ def _print_frame(built: dict, minute: int) -> None:
         print(f"  {event['clock']}  {event['type']}")
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    data_dir = paths.find_data_dir(args.data)
+    report = riot.diagnose(data_dir)
+    if report.get("error"):
+        print(f"❌ {report['error']}")
+        return 2
+    print(f"Key：{report['masked']}（{report['length']} 个字符，来自 {report['source']}）")
+    print(f"格式：{report['shapeMessage']}")
+    for key in ("header", "query"):
+        item = report[key]
+        state = f"HTTP {item['status']} 通过" if item["ok"] else (
+            f"HTTP {item['status']}" if item["status"] else item.get("error", "失败")
+        )
+        print(f"{item['method']}：{state}")
+    print()
+    print(report["verdict"])
+    return 0 if (report["header"]["ok"] or report["query"]["ok"]) else 1
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     from . import server
 
@@ -229,6 +248,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--minute", type=int, help="顺便在 Terminal 里打印这一分钟的完整局势")
     p.add_argument("--out", help="输出文件路径（默认 data/states/<matchId>.state.json）")
     p.set_defaults(func=cmd_state)
+
+    p = sub.add_parser("doctor", help="自检：分清「Key 无效」和「请求被拦截」两种 403")
+    p.set_defaults(func=cmd_doctor)
 
     p = sub.add_parser("serve", help="打开 Timeline / State 调试页面")
     p.add_argument("--port", type=int, default=8010, help="默认 8010，不占用现有的 8000")

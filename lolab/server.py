@@ -323,6 +323,8 @@ class DebugHandler(BaseHTTPRequestHandler):
                 self._send_json(api_status())
             elif path == "/api/job":
                 self._send_json(CONSOLE.snapshot())
+            elif path == "/api/diagnose":
+                self._send_json(riot.diagnose(CONSOLE.data_dir))
             elif path == "/api/datadir/scan":
                 self._send_json({"candidates": store.find_data_dir_candidates()})
             elif path == "/api/matches":

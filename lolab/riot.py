@@ -23,6 +23,23 @@ _SECRET_FILES = ("riot_secret.json", "secret.json", "riot.json", "config.json")
 _KEY_FIELDS = ("key", "api_key", "apiKey", "riot_api_key", "riotApiKey", "RIOT_API_KEY")
 
 
+# Riot 的接入层会拦掉「看起来像脚本」的请求（默认 UA 是 Python-urllib/3.x），
+# 表现为 403 —— 和 Key 是否有效无关，极易误判。这组请求头是官方文档示例里的写法。
+_BASE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Charset": "application/x-www-form-urlencoded; charset=UTF-8",
+    "Origin": "https://developer.riotgames.com",
+}
+
+
+def _headers(api_key: str) -> dict[str, str]:
+    return {**_BASE_HEADERS, "X-Riot-Token": api_key}
+
+
 class RiotError(RuntimeError):
     """带 HTTP 状态码的 Riot API 错误，方便上层给出人话解释。"""
 
@@ -83,15 +100,41 @@ def load_api_key(data_dir: Path) -> str:
     return resolve_api_key(data_dir)[0]
 
 
+# 接入层拦掉「请求头」方式时，自动改用网址参数。判定一次后记住，避免每次都白试一遍。
+_use_query_param = False
+
+
+def _build(url: str, api_key: str, as_query: bool) -> urllib.request.Request:
+    if not as_query:
+        return urllib.request.Request(url, headers=_headers(api_key))
+    joiner = "&" if "?" in url else "?"
+    full = f"{url}{joiner}{urllib.parse.urlencode({'api_key': api_key})}"
+    return urllib.request.Request(full, headers=_BASE_HEADERS)
+
+
 def get(url: str, api_key: str, retries: int = 4) -> Any:
-    """GET 一个 Riot API 地址；遇到 429 限流会按 Retry-After 自动等待重试。"""
+    """GET 一个 Riot API 地址。
+
+    429 限流会按 Retry-After 自动等待重试；
+    403 且是「请求头」方式时，会改用网址参数再试一次 —— 这两种 403 长得一样，
+    但一个是 Key 无效、另一个是请求被拦截，必须区分开。
+    """
+    global _use_query_param
     last: Exception | None = None
+
     for attempt in range(retries):
-        request = urllib.request.Request(url, headers={"X-Riot-Token": api_key})
         try:
-            with net.urlopen(request, timeout=30) as response:
+            with net.urlopen(_build(url, api_key, _use_query_param), timeout=30) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as err:
+            if err.code == 403 and not _use_query_param:
+                # 换一种方式再试一次；成功就说明刚才那个 403 与 Key 无关
+                try:
+                    with net.urlopen(_build(url, api_key, True), timeout=30) as response:
+                        _use_query_param = True
+                        return json.loads(response.read().decode("utf-8"))
+                except urllib.error.HTTPError as retry_err:
+                    raise RiotError(retry_err.code, _explain(retry_err.code, url)) from retry_err
             if err.code == 429:
                 wait = int(err.headers.get("Retry-After", "10") or 10)
                 time.sleep(min(wait, 120))
@@ -103,11 +146,11 @@ def get(url: str, api_key: str, retries: int = 4) -> Any:
                 continue
             raise RiotError(err.code, _explain(err.code, url)) from err
         except urllib.error.URLError as err:
-            # 证书问题重试多少次都一样，直接给出解决办法
             if net.is_cert_error(err):
                 raise RiotError(0, net.CERT_HELP) from err
             time.sleep(2 ** attempt)
             last = err
+
     if last is not None and net.is_cert_error(last):
         raise RiotError(0, net.CERT_HELP)
     raise RiotError(0, f"请求失败（已重试 {retries} 次）：{last}")
@@ -117,7 +160,7 @@ def _explain(status: int, url: str) -> str:
     hints = {
         400: "请求格式不对（通常是 Riot ID 或 matchId 拼错了）",
         401: "没有带 API Key",
-        403: "API Key 无效或已过期。Development Key 24 小时过期，请去 Riot Developer Portal 重新生成，再在网站上重新保存一次",
+        403: "被 Riot 拒绝。可能是 Key 过期（Development Key 24 小时失效），也可能是请求被接入层拦截。请在控制台点「自检」分清是哪一种",
         404: "Riot 说这个资源不存在（检查 matchId / Riot ID / 大区是否正确）",
         429: "触发限流，稍后再试",
     }
@@ -303,3 +346,75 @@ def check_key_format(key: str) -> tuple[bool, str]:
             "RGAPI-8位-4位-4位-4位-12位 的十六进制。可能混进了看不见的字符。"
         )
     return True, f"格式正常（{len(key)} 个字符）"
+
+
+def diagnose(data_dir: Path, platform: str = "KR") -> dict[str, Any]:
+    """自检：用同一个 Key，分别以「请求头」和「网址参数」两种方式访问同一个接口。
+
+    这能分清两件长得一样、原因完全不同的 403：
+      · 两种都失败  → Key 本身的问题
+      · 只有请求头失败 → 请求被接入层拦截，与 Key 无关
+    """
+    out: dict[str, Any] = {"platform": platform}
+    try:
+        key, source = resolve_api_key(data_dir)
+    except RiotError as err:
+        return {**out, "error": str(err)}
+
+    shape_ok, shape_msg = check_key_format(key)
+    out.update(
+        {
+            "masked": mask(key),
+            "length": len(key),
+            "source": source,
+            "shapeOk": shape_ok,
+            "shapeMessage": shape_msg,
+        }
+    )
+
+    host = PLATFORM_HOSTS.get(platform.upper(), "kr")
+    url = f"https://{host}.api.riotgames.com/lol/status/v4/platform-data"
+
+    def attempt(label: str, request: urllib.request.Request) -> dict[str, Any]:
+        try:
+            with net.urlopen(request, timeout=20) as response:
+                return {"method": label, "ok": True, "status": response.status}
+        except urllib.error.HTTPError as err:
+            return {"method": label, "ok": False, "status": err.code}
+        except Exception as err:  # noqa: BLE001 - 自检要把任何失败都显示出来
+            return {"method": label, "ok": False, "status": 0, "error": str(err)}
+
+    out["header"] = attempt(
+        "请求头 X-Riot-Token", urllib.request.Request(url, headers=_headers(key))
+    )
+    out["query"] = attempt(
+        "网址参数 api_key",
+        urllib.request.Request(
+            f"{url}?{urllib.parse.urlencode({'api_key': key})}", headers=_BASE_HEADERS
+        ),
+    )
+
+    out["usingQueryParam"] = _use_query_param
+    header_ok, query_ok = out["header"]["ok"], out["query"]["ok"]
+    if header_ok:
+        out["verdict"] = "✅ 一切正常，可以开始同步。"
+    elif query_ok:
+        out["verdict"] = (
+            "⚠️ Key 是好的，但「请求头」方式被拦截了 —— 工具会自动改用网址参数方式。"
+        )
+    elif out["header"]["status"] == 0 and out["query"]["status"] == 0:
+        # 压根没连上 Riot（网络 / 证书 / 代理），这时候怪 Key 是错的
+        detail = out["header"].get("error") or out["query"].get("error") or ""
+        out["verdict"] = (
+            "❌ 根本没连上 Riot，两次都没拿到回应 —— 这是网络或证书问题，"
+            f"和 Key 无关。\n{detail}"
+        )
+    elif not shape_ok:
+        out["verdict"] = f"❌ Key 的格式就不对：{shape_msg}"
+    else:
+        codes = f"请求头 HTTP {out['header']['status']}、网址参数 HTTP {out['query']['status']}"
+        out["verdict"] = (
+            f"❌ 两种方式都被 Riot 拒绝（{codes}），Key 本身有问题。回 Riot Developer "
+            "Portal 点 REGENERATE API KEY 生成新的，再回来重新保存。"
+        )
+    return out

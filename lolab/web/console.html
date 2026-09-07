@@ -40,6 +40,7 @@
   button.ghost:hover:not(:disabled) { background:#2c3441; }
 
   .msg { margin-top:9px; font-size:13px; padding:9px 12px; border-radius:7px; display:none; }
+  .msg { white-space: pre-wrap; }
   .msg.ok  { display:block; background:#0d2a17; border:1px solid #16663a; color:#86efac; }
   .msg.err { display:block; background:#2a1113; border:1px solid #7a2a2f; color:#fca5a5; }
 
@@ -117,6 +118,7 @@
     <div style="flex:none">
       <button onclick="saveKey()">保存</button>
       <button class="ghost" onclick="verifyKey()">验证是否有效</button>
+      <button class="ghost" onclick="doctor()">自检</button>
     </div>
   </div>
   <div class="msg" id="keyMsg"></div>
@@ -285,6 +287,18 @@ function saveKey() {
     if (r.ok) { $('keyInput').value = ''; refresh(); }
   });
 }
+function doctor() {
+  say('keyMsg', true, '正在自检：用同一个 Key 分别试「请求头」和「网址参数」两种方式…');
+  fetch('/api/diagnose').then(r => r.json()).then(d => {
+    if (d.error) return say('keyMsg', false, d.error);
+    const line = m => `${m.method}：${m.ok ? 'HTTP ' + m.status + ' 通过' :
+      (m.status ? 'HTTP ' + m.status : m.error || '失败')}`;
+    say('keyMsg', d.header.ok || d.query.ok,
+      `${d.verdict}\n\n实际使用：${d.masked}（${d.length} 个字符，来自 ${d.source}）\n` +
+      `${line(d.header)}\n${line(d.query)}`);
+  });
+}
+
 function verifyKey() {
   say('keyMsg', true, '正在向 Riot 验证…');
   post('/api/key/verify', {platform: 'KR'}).then(r => say('keyMsg', r.ok, r.message));
