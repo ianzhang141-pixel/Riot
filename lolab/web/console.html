@@ -132,7 +132,7 @@
     <b>Timeline 是另一个独立接口</b>，很多实现只抓了 Match 没抓 Timeline —— 这里两个都会抓。
   </p>
   <div class="row">
-    <div class="grow2"><label>Riot ID（名字#标签）</label>
+    <div class="grow2"><label>Riot ID（名字#标签），或直接填 PUUID</label>
       <input type="text" id="riotId" value="JUGKING#Kr" spellcheck="false"></div>
     <div style="flex:none"><label>大区路由</label>
       <select id="region">
@@ -147,7 +147,9 @@
       <input type="number" id="queue" value="420" style="width:90px"></div>
     <div style="flex:none"><button id="syncBtn" onclick="sync()">开始同步</button></div>
   </div>
-  <p class="hint" style="margin:0">Queue 420 = 排位 Solo/Duo。留空表示不限队列。20 场大约要 1 分钟。</p>
+  <p class="hint" style="margin:0">Queue 420 = 排位 Solo/Duo。留空表示不限队列。20 场大约要 1 分钟。<br>
+     查不到账号时会自动试 I/l、0/O 这类易混淆写法和标签大小写。
+     职业选手改名频繁，<b>PUUID 才是不会失效的身份</b>，知道的话直接填 PUUID 最稳。</p>
   <div class="msg" id="syncMsg"></div>
 </div>
 

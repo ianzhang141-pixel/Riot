@@ -422,3 +422,75 @@ def diagnose(data_dir: Path, platform: str = "KR") -> dict[str, Any]:
             f"然后看上面的遮蔽形式有没有从 {out['masked']} 变成别的。没变就是没粘进去。"
         )
     return out
+
+
+# 肉眼极易混淆的字符。职业选手 ID 里 I/l、0/O 抄错是最常见的失败原因。
+_LOOKALIKES = {"I": "l", "l": "I", "0": "O", "O": "0", "1": "l"}
+_MAX_VARIANTS = 24
+
+
+def name_variants(name: str, cap: int = _MAX_VARIANTS) -> list[str]:
+    """原样优先，然后逐个替换易混淆字符，最后是全部替换的版本。"""
+    out = [name]
+    spots = [i for i, ch in enumerate(name) if ch in _LOOKALIKES]
+
+    for i in spots:  # 一次只换一个位置
+        swapped = name[:i] + _LOOKALIKES[name[i]] + name[i + 1 :]
+        if swapped not in out:
+            out.append(swapped)
+
+    if len(spots) > 1:  # 全部一起换
+        chars = list(name)
+        for i in spots:
+            chars[i] = _LOOKALIKES[chars[i]]
+        swapped = "".join(chars)
+        if swapped not in out:
+            out.append(swapped)
+
+    return out[:cap]
+
+
+def tag_variants(tag: str) -> list[str]:
+    out: list[str] = []
+    for candidate in (tag, tag.upper(), tag.lower(), tag.capitalize()):
+        if candidate not in out:
+            out.append(candidate)
+    return out
+
+
+def find_account(
+    region: str,
+    game_name: str,
+    tag_line: str,
+    api_key: str,
+    log: Any = None,
+) -> tuple[dict[str, Any], str]:
+    """查账号；原样查不到时，自动试易混淆的写法。
+
+    返回 (账号信息, 实际生效的 Riot ID)。全都查不到才抛错。
+    """
+    tried: list[str] = []
+    for name in name_variants(game_name):
+        for tag in tag_variants(tag_line):
+            riot_id = f"{name}#{tag}"
+            if riot_id in tried:
+                continue
+            tried.append(riot_id)
+            try:
+                account = fetch_account(region, name, tag, api_key)
+            except RiotError as err:
+                if err.status == 404:
+                    continue
+                raise  # 401/403/429 这些不是「拼错了」，直接往上抛
+            if len(tried) > 1 and log:
+                log(f"  ℹ️ 原样查不到，实际匹配到的是：{riot_id}")
+            return account, riot_id
+
+    raise RiotError(
+        404,
+        f"查不到这个账号。已经试过 {len(tried)} 种写法（含 I/l、0/O 等易混淆字符和"
+        f"标签大小写），都不存在。\n"
+        f"试过的前几种：{'、'.join(tried[:6])}\n"
+        f"可能是这名选手改名了 —— 职业选手改名很常见，这也是为什么应该用 PUUID "
+        f"而不是 Riot ID 长期追踪身份。请到 op.gg 或 deeplol.gg 查一下当前的 Riot ID。",
+    )

@@ -222,9 +222,14 @@ def _fetch_one(
 def api_sync(body: dict[str, Any]) -> dict[str, Any]:
     assert CONSOLE
     riot_id = str(body.get("riotId", "")).strip()
-    if "#" not in riot_id:
-        return {"started": False, "reason": "Riot ID 要写成「名字#标签」的样子，例如 JUGKING#Kr。"}
-    game_name, tag_line = riot_id.split("#", 1)
+    # PUUID 是 78 位、不含 # 的长串。改名不会变，是更可靠的输入方式。
+    is_puuid = "#" not in riot_id and len(riot_id) >= 70
+    if not is_puuid and "#" not in riot_id:
+        return {
+            "started": False,
+            "reason": "填「名字#标签」（例如 JUGKING#Kr），或者直接填 PUUID（78 位长串）。",
+        }
+    game_name, tag_line = ("", "") if is_puuid else riot_id.split("#", 1)
     region = str(body.get("region") or "asia")
     count = max(1, min(100, int(body.get("count") or 20)))
     queue_raw = str(body.get("queue") or "420").strip()
@@ -234,10 +239,14 @@ def api_sync(body: dict[str, Any]) -> dict[str, Any]:
     def work(log: Callable[[str], None]) -> None:
         key = riot.load_api_key(data_dir)
 
-        log(f"查询 Riot ID：{game_name}#{tag_line}（{region}）")
-        account = riot.fetch_account(region, game_name, tag_line, key)
-        puuid = account.get("puuid", "")
-        log(f"  ✅ PUUID：{puuid[:12]}…（这才是稳定身份，改名也不变）")
+        if is_puuid:
+            puuid = riot_id
+            log(f"直接使用 PUUID：{puuid[:12]}…")
+        else:
+            log(f"查询 Riot ID：{game_name}#{tag_line}（{region}）")
+            account, actual = riot.find_account(region, game_name, tag_line, key, log)
+            puuid = account.get("puuid", "")
+            log(f"  ✅ {actual} → PUUID：{puuid[:12]}…（这才是稳定身份，改名也不变）")
 
         log(f"拉取最近 {count} 场" + (f"（Queue {queue}）" if queue else "（不限队列）"))
         match_ids = riot.fetch_match_ids(region, puuid, key, count, queue)
