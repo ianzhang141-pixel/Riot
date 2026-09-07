@@ -215,3 +215,33 @@ def mask(key: str) -> str:
     if not key:
         return ""
     return f"{key[:9]}…{key[-4:]}" if len(key) > 16 else "已保存"
+
+
+def key_info(data_dir: Path) -> dict[str, Any]:
+    """Key 的遮蔽形式与保存时间。Development Key 24 小时过期，需要提前提醒。"""
+    info: dict[str, Any] = {"masked": "", "savedAt": None, "ageHours": None, "expired": None}
+    try:
+        info["masked"] = mask(load_api_key(data_dir))
+    except RiotError:
+        return info
+
+    path = data_dir / "riot_secret.json"
+    if not path.is_file():
+        return info
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            saved = json.load(handle).get("savedAt")
+    except (OSError, ValueError, AttributeError):
+        return info
+    if not isinstance(saved, str):
+        return info
+
+    info["savedAt"] = saved
+    try:
+        stamp = time.mktime(time.strptime(saved, "%Y-%m-%d %H:%M:%S"))
+    except ValueError:
+        return info
+    hours = (time.time() - stamp) / 3600
+    info["ageHours"] = round(hours, 1)
+    info["expired"] = hours >= 24
+    return info

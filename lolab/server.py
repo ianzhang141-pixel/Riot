@@ -109,6 +109,7 @@ def api_status() -> dict[str, Any]:
         key_masked = riot.mask(riot.load_api_key(data_dir))
     except riot.RiotError as err:
         key_error = str(err)
+    key_age = riot.key_info(data_dir)
 
     inv = store.inventory(data_dir) if exists else {
         "matches": [], "total": 0, "withTimeline": 0,
@@ -120,6 +121,8 @@ def api_status() -> dict[str, Any]:
         "hasKey": bool(key_masked),
         "keyMasked": key_masked,      # 永远只回遮蔽形式，绝不回完整 Key
         "keyError": key_error,
+        "keyAgeHours": key_age.get("ageHours"),
+        "keyExpired": key_age.get("expired"),
         "itemCostsLoaded": bool(ddragon.load(data_dir)) if exists else False,
         "version": __version__,
         "certStatus": net.describe(),

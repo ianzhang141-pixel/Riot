@@ -195,14 +195,26 @@ function say(id, ok, text) {
 }
 
 // ---------- 总览 ----------
+function keyClass(s) {
+  if (!s.hasKey) return 'bad';
+  return s.keyExpired ? 'bad' : (s.keyAgeHours >= 20 ? 'warn' : 'good');
+}
+function keyAgeText(s) {
+  if (!s.hasKey) return 'API Key';
+  if (s.keyAgeHours === null || s.keyAgeHours === undefined) return 'API Key';
+  if (s.keyExpired) return `API Key · 已存 ${s.keyAgeHours} 小时，多半已过期`;
+  if (s.keyAgeHours >= 20) return `API Key · 已存 ${s.keyAgeHours} 小时，快过期了`;
+  return `API Key · 已存 ${s.keyAgeHours} 小时`;
+}
+
 function refresh() {
   return fetch('/api/status').then(r => r.json()).then(s => {
     const inv = s.inventory;
     $('overview').innerHTML = `
       <div><b class="${s.dataDirExists ? 'good' : 'bad'}">${s.dataDirExists ? '已就绪' : '不存在'}</b>
            <span>数据目录</span></div>
-      <div><b class="${s.hasKey ? 'good' : 'bad'}">${s.hasKey ? s.keyMasked : '未设置'}</b>
-           <span>API Key</span></div>
+      <div><b class="${keyClass(s)}">${s.hasKey ? s.keyMasked : '未设置'}</b>
+           <span>${keyAgeText(s)}</span></div>
       <div><b>${inv.total}</b><span>比赛总数</span></div>
       <div><b class="${inv.withTimeline ? 'good' : 'bad'}">${inv.withTimeline}</b>
            <span>有 Timeline</span></div>
