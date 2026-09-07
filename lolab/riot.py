@@ -414,7 +414,11 @@ def diagnose(data_dir: Path, platform: str = "KR") -> dict[str, Any]:
     else:
         codes = f"请求头 HTTP {out['header']['status']}、网址参数 HTTP {out['query']['status']}"
         out["verdict"] = (
-            f"❌ 两种方式都被 Riot 拒绝（{codes}），Key 本身有问题。回 Riot Developer "
-            "Portal 点 REGENERATE API KEY 生成新的，再回来重新保存。"
+            f"❌ 两种方式都被 Riot 拒绝（{codes}）。请求本身没问题（两种发法都试过了），"
+            "是 Riot 不认这个 Key。\n\n"
+            "最常见的原因：存在这里的不是 Riot 页面上当前显示的那一串。"
+            "**每点一次 REGENERATE，上一个 Key 会立刻作废** —— 所以不要再重新生成了，"
+            "直接打开 Riot Developer Portal，把页面上**现在显示的**那串复制过来保存，"
+            f"然后看上面的遮蔽形式有没有从 {out['masked']} 变成别的。没变就是没粘进去。"
         )
     return out
