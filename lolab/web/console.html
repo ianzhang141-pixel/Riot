@@ -178,6 +178,8 @@
   <div id="matches">读取中…</div>
 </div>
 
+<p class="sub" id="build" style="margin:18px 0 0; font-size:12px"></p>
+
 <script>
 let polling = null;
 
@@ -207,6 +209,7 @@ function refresh() {
       <div><b class="${inv.withoutTimeline ? 'warn' : ''}">${inv.withoutTimeline}</b>
            <span>缺 Timeline</span></div>`;
 
+    $('build').textContent = `lolab ${s.version || '?'}　·　${s.certStatus || ''}`;
     if (!$('dirInput').value) $('dirInput').value = s.dataDir;
     $('s1').className = 'step ' + (s.dataDirExists ? 'done' : 'wait');
     $('s2').className = 'step ' + (s.hasKey ? 'done' : 'wait');

@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 
-from . import check, ddragon, paths, riot, state, store
+from . import __version__, check, ddragon, net, paths, riot, state, store
 
 WEB_DIR = Path(__file__).parent / "web"
 MAX_BODY = 1 * 1024 * 1024
@@ -121,6 +121,8 @@ def api_status() -> dict[str, Any]:
         "keyMasked": key_masked,      # 永远只回遮蔽形式，绝不回完整 Key
         "keyError": key_error,
         "itemCostsLoaded": bool(ddragon.load(data_dir)) if exists else False,
+        "version": __version__,
+        "certStatus": net.describe(),
         "inventory": inv,
     }
 
@@ -388,6 +390,7 @@ def serve(data_dir: Path, port: int = 8010) -> None:
     print(f"  │  控制台已启动：http://127.0.0.1:{port}        │")
     print("  └──────────────────────────────────────────────┘")
     print()
+    print(f"  版本：lolab {__version__}    {net.describe()}")
     print(f"  数据目录：{data_dir}")
     print("  在 Chrome 里打开上面那个地址，接下来全在网页上点。")
     print("  要停止：回到这个窗口按 Control + C。")

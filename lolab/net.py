@@ -74,3 +74,18 @@ CERT_HELP = (
     '    open "/Applications/Python 3.13/Install Certificates.command"\n'
     "（把 3.13 换成你实际的版本号；文件夹名可以在「访达 → 应用程序」里看到）"
 )
+
+
+def describe() -> str:
+    """一句话说明证书是从哪来的、找到多少个 CA。用来一眼确认环境是否正常。"""
+    context = ssl_context()
+    count = context.cert_store_stats().get("x509_ca", 0)
+    try:
+        import certifi  # noqa: F401
+
+        source = "certifi"
+    except Exception:  # noqa: BLE001
+        source = "系统默认"
+    if count == 0:
+        return "❌ 没有找到任何根证书 —— HTTPS 会失败，见下方提示"
+    return f"✅ 证书正常（{source}，{count} 个 CA）"
