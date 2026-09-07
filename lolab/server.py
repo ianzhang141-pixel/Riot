@@ -123,6 +123,8 @@ def api_status() -> dict[str, Any]:
         "keyError": key_error,
         "keyAgeHours": key_age.get("ageHours"),
         "keyExpired": key_age.get("expired"),
+        "keySource": key_age.get("source"),
+        "keyEnvConflict": key_age.get("envConflict"),
         "itemCostsLoaded": bool(ddragon.load(data_dir)) if exists else False,
         "version": __version__,
         "certStatus": net.describe(),
@@ -158,14 +160,15 @@ def api_verify_key(body: dict[str, Any]) -> dict[str, Any]:
     assert CONSOLE
     platform = str(body.get("platform", "KR")).upper()
     try:
-        key = riot.load_api_key(CONSOLE.data_dir)
+        key, source = riot.resolve_api_key(CONSOLE.data_dir)
     except riot.RiotError as err:
         return {"ok": False, "message": str(err)}
+    used = f"（实际使用：{riot.mask(key)}，来自 {source}）"
     try:
         riot.verify_key(key, platform)
     except riot.RiotError as err:
-        return {"ok": False, "message": str(err)}
-    return {"ok": True, "message": f"✅ Key 有效，{platform} 大区连接正常。"}
+        return {"ok": False, "message": f"{err}\n{used}"}
+    return {"ok": True, "message": f"✅ Key 有效，{platform} 大区连接正常。{used}"}
 
 
 def api_fetch(body: dict[str, Any]) -> dict[str, Any]:

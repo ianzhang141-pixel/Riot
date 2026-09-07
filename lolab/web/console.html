@@ -201,10 +201,11 @@ function keyClass(s) {
 }
 function keyAgeText(s) {
   if (!s.hasKey) return 'API Key';
-  if (s.keyAgeHours === null || s.keyAgeHours === undefined) return 'API Key';
-  if (s.keyExpired) return `API Key · 已存 ${s.keyAgeHours} 小时，多半已过期`;
-  if (s.keyAgeHours >= 20) return `API Key · 已存 ${s.keyAgeHours} 小时，快过期了`;
-  return `API Key · 已存 ${s.keyAgeHours} 小时`;
+  const src = s.keySource ? ` · 来自 ${s.keySource}` : '';
+  if (s.keyAgeHours === null || s.keyAgeHours === undefined) return 'API Key' + src;
+  if (s.keyExpired) return `已存 ${s.keyAgeHours} 小时，多半已过期${src}`;
+  if (s.keyAgeHours >= 20) return `已存 ${s.keyAgeHours} 小时，快过期了${src}`;
+  return `已存 ${s.keyAgeHours} 小时${src}`;
 }
 
 function refresh() {
@@ -226,6 +227,13 @@ function refresh() {
     $('s1').className = 'step ' + (s.dataDirExists ? 'done' : 'wait');
     $('s2').className = 'step ' + (s.hasKey ? 'done' : 'wait');
     $('s3').className = 'step ' + (inv.withTimeline ? 'done' : 'wait');
+
+    if (s.keyEnvConflict) {
+      say('keyMsg', false,
+        '注意：你的终端里还设了环境变量 RIOT_API_KEY，内容和刚保存的这个不一样。' +
+        '现在以刚保存的这个为准（文件优先）。如果想彻底清掉那个旧的，' +
+        '在终端里执行 unset RIOT_API_KEY 后重启控制台。');
+    }
 
     let extra = '';
     if (inv.sqliteFiles.length)

@@ -31,14 +31,7 @@ class RiotError(RuntimeError):
         self.status = status
 
 
-def load_api_key(data_dir: Path) -> str:
-    """从环境变量或 data/riot_secret.json 读取 Development API Key。"""
-    import os
-
-    env = os.environ.get("RIOT_API_KEY")
-    if env and env.strip():
-        return env.strip()
-
+def _key_from_file(data_dir: Path) -> str:
     for name in _SECRET_FILES:
         path = data_dir / name
         if not path.is_file():
@@ -55,13 +48,39 @@ def load_api_key(data_dir: Path) -> str:
                 value = obj.get(field)
                 if isinstance(value, str) and value.strip():
                     return value.strip()
+    return ""
+
+
+def _key_from_env() -> str:
+    import os
+
+    return (os.environ.get("RIOT_API_KEY") or "").strip()
+
+
+def resolve_api_key(data_dir: Path) -> tuple[str, str]:
+    """返回 (Key, 来源说明)。
+
+    文件优先于环境变量：用户在网页上按了「保存」，那就该用这一个。
+    早期版本反过来，导致网页显示「已保存」但实际仍在用旧的环境变量，
+    这是一个会让人查半天的坑。
+    """
+    from_file = _key_from_file(data_dir)
+    if from_file:
+        return from_file, "riot_secret.json"
+
+    from_env = _key_from_env()
+    if from_env:
+        return from_env, "环境变量 RIOT_API_KEY"
 
     raise RiotError(
         0,
-        "没有找到 Riot API Key。请确认网站上的「保存到本机」已经写入 "
-        f"{data_dir / 'riot_secret.json'}，或者在 Terminal 里先执行 "
-        "export RIOT_API_KEY=你的Key",
+        "没有找到 Riot API Key。请在控制台第 2 步粘贴 Key 后点「保存」，"
+        f"它会写进 {data_dir / 'riot_secret.json'}",
     )
+
+
+def load_api_key(data_dir: Path) -> str:
+    return resolve_api_key(data_dir)[0]
 
 
 def get(url: str, api_key: str, retries: int = 4) -> Any:
@@ -219,11 +238,20 @@ def mask(key: str) -> str:
 
 def key_info(data_dir: Path) -> dict[str, Any]:
     """Key 的遮蔽形式与保存时间。Development Key 24 小时过期，需要提前提醒。"""
-    info: dict[str, Any] = {"masked": "", "savedAt": None, "ageHours": None, "expired": None}
+    info: dict[str, Any] = {
+        "masked": "", "savedAt": None, "ageHours": None,
+        "expired": None, "source": None, "envConflict": False,
+    }
     try:
-        info["masked"] = mask(load_api_key(data_dir))
+        key, source = resolve_api_key(data_dir)
     except RiotError:
         return info
+    info["masked"] = mask(key)
+    info["source"] = source
+
+    # 环境变量存在但和实际使用的不是同一个，必须说出来
+    env = _key_from_env()
+    info["envConflict"] = bool(env and env != key)
 
     path = data_dir / "riot_secret.json"
     if not path.is_file():
