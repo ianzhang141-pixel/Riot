@@ -149,11 +149,15 @@ def api_save_key(body: dict[str, Any]) -> dict[str, Any]:
     key = str(body.get("key", "")).strip()
     if not key:
         return {"ok": False, "message": "Key 是空的。"}
-    if not key.startswith("RGAPI-"):
-        return {"ok": False, "message": "看起来不像 Riot 的 Key —— 正常的 Key 以 RGAPI- 开头。"}
+    shape_ok, shape_msg = riot.check_key_format(key)
+    if not shape_ok:
+        return {"ok": False, "message": shape_msg}
     data_dir = paths.ensure(CONSOLE.data_dir)
     path = riot.save_api_key(data_dir, key)
-    return {"ok": True, "message": f"已保存到 {path}（文件权限已设为只有你能读）"}
+    return {
+        "ok": True,
+        "message": f"已保存到 {path}　·　{shape_msg}（文件权限已设为只有你能读）",
+    }
 
 
 def api_verify_key(body: dict[str, Any]) -> dict[str, Any]:
@@ -163,7 +167,10 @@ def api_verify_key(body: dict[str, Any]) -> dict[str, Any]:
         key, source = riot.resolve_api_key(CONSOLE.data_dir)
     except riot.RiotError as err:
         return {"ok": False, "message": str(err)}
-    used = f"（实际使用：{riot.mask(key)}，来自 {source}）"
+    shape_ok, shape_msg = riot.check_key_format(key)
+    used = f"（实际使用：{riot.mask(key)}，{len(key)} 个字符，来自 {source}）"
+    if not shape_ok:
+        return {"ok": False, "message": f"{shape_msg}\n{used}"}
     try:
         riot.verify_key(key, platform)
     except riot.RiotError as err:

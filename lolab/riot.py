@@ -273,3 +273,33 @@ def key_info(data_dir: Path) -> dict[str, Any]:
     info["ageHours"] = round(hours, 1)
     info["expired"] = hours >= 24
     return info
+
+
+# Riot 的 Development Key 形如 RGAPI-8位-4位-4位-4位-12位（十六进制），总长 42
+_KEY_PATTERN = __import__("re").compile(
+    r"^RGAPI-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    __import__("re").IGNORECASE,
+)
+KEY_LENGTH = 42
+
+
+def check_key_format(key: str) -> tuple[bool, str]:
+    """检查 Key 的形状是否正常。粘贴时少复制几个字符是很常见的失误，
+    而遮蔽形式只显示头尾，中间坏了看不出来，所以这里按长度和格式明确报出。"""
+    key = key.strip()
+    if not key:
+        return False, "Key 是空的。"
+    if not key.startswith("RGAPI-"):
+        return False, "不像 Riot 的 Key —— 正常的 Key 以 RGAPI- 开头。"
+    if len(key) != KEY_LENGTH:
+        return False, (
+            f"长度不对：这串是 {len(key)} 个字符，正常的 Development Key 是 "
+            f"{KEY_LENGTH} 个。多半是复制时漏了尾巴，或者混进了空格/换行。"
+            "回 Riot 页面用复制按钮重新复制一次，不要手动拖选。"
+        )
+    if not _KEY_PATTERN.match(key):
+        return False, (
+            f"长度对（{len(key)} 个字符）但格式不对 —— 正常形如 "
+            "RGAPI-8位-4位-4位-4位-12位 的十六进制。可能混进了看不见的字符。"
+        )
+    return True, f"格式正常（{len(key)} 个字符）"
