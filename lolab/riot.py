@@ -112,13 +112,20 @@ def _build(url: str, api_key: str, as_query: bool) -> urllib.request.Request:
     return urllib.request.Request(full, headers=_BASE_HEADERS)
 
 
-def get(url: str, api_key: str, retries: int = 4) -> Any:
+def get(url: str, api_key: str, retries: int = 4, data_dir: Path | None = None, kind="metadata", source_id="metadata") -> Any:
     """GET 一个 Riot API 地址。
 
     429 限流会按 Retry-After 自动等待重试；
     403 且是「请求头」方式时，会改用网址参数再试一次 —— 这两种 403 长得一样，
     但一个是 Key 无效、另一个是请求被拦截，必须区分开。
     """
+    if data_dir is not None:
+        from .archive import Warehouse
+        from .transport import Client
+        try:
+            return Client(Warehouse(data_dir), "riot-match-v5", "account-v1" if kind == "account" else "v5", _headers(api_key)).fetch(url, kind, source_id, refresh=True)[1]
+        except ValueError as err:
+            raise RiotError(getattr(err, "status", 0), str(err)) from err
     global _use_query_param
     last: Exception | None = None
 
@@ -175,12 +182,30 @@ def timeline_url(region: str, match_id: str) -> str:
     return f"https://{region}.api.riotgames.com/lol/match/v5/matches/{match_id}/timeline"
 
 
-def fetch_match(region: str, match_id: str, api_key: str) -> dict[str, Any]:
-    return get(match_url(region, match_id), api_key)
+def fetch_match(region: str, match_id: str, api_key: str, data_dir: Path | None = None) -> dict[str, Any]:
+    return _fetch_archived(region, match_id, api_key, "match", data_dir)
 
 
-def fetch_timeline(region: str, match_id: str, api_key: str) -> dict[str, Any]:
-    return get(timeline_url(region, match_id), api_key)
+def fetch_timeline(region: str, match_id: str, api_key: str, data_dir: Path | None = None) -> dict[str, Any]:
+    return _fetch_archived(region, match_id, api_key, "timeline", data_dir)
+
+
+def _fetch_archived(region, match_id, api_key, kind, data_dir):
+    import re
+    if region not in REGIONAL_ROUTES or not re.fullmatch(r"[A-Za-z0-9_-]+", match_id):
+        raise RiotError(400, "大区或比赛 ID 格式无效")
+    url = match_url(region, match_id) if kind == "match" else timeline_url(region, match_id)
+    if data_dir is None:
+        return get(url, api_key)
+    from .archive import Warehouse
+    from .transport import Client, DeferredRequest
+    try:
+        _, obj = Client(Warehouse(data_dir), "riot-match-v5", "v5", _headers(api_key)).fetch(url, kind, match_id, refresh=True)
+    except (ValueError, DeferredRequest) as err:
+        raise RiotError(getattr(err, "status", 0), str(err)) from err
+    if not isinstance(obj, dict) or (obj.get("metadata") or {}).get("matchId") != match_id:
+        raise RiotError(0, "返回的比赛 ID 不匹配；原始响应已保留，请检查来源")
+    return obj
 
 
 def guess_region(match_id: str) -> str:
@@ -214,7 +239,7 @@ def verify_key(api_key: str, platform: str = "KR") -> dict[str, Any]:
     return get(url, api_key, retries=1)
 
 
-def fetch_account(region: str, game_name: str, tag_line: str, api_key: str) -> dict[str, Any]:
+def fetch_account(region: str, game_name: str, tag_line: str, api_key: str, data_dir: Path | None = None) -> dict[str, Any]:
     """Riot ID（名字#标签）→ 账号信息（含 PUUID）。"""
     name = urllib.parse.quote(game_name, safe="")
     tag = urllib.parse.quote(tag_line, safe="")
@@ -222,7 +247,7 @@ def fetch_account(region: str, game_name: str, tag_line: str, api_key: str) -> d
         f"https://{region}.api.riotgames.com"
         f"/riot/account/v1/accounts/by-riot-id/{name}/{tag}"
     )
-    return get(url, api_key, retries=2)
+    return get(url, api_key, retries=2, data_dir=data_dir, kind="account", source_id=f"{region}:{game_name}#{tag_line}")
 
 
 def fetch_match_ids(
@@ -232,6 +257,7 @@ def fetch_match_ids(
     count: int = 20,
     queue: int | None = 420,
     start: int = 0,
+    data_dir: Path | None = None,
 ) -> list[str]:
     """PUUID → 最近 N 场的 matchId 列表。queue=420 是排位 Solo/Duo。"""
     params = {"start": start, "count": max(1, min(100, count))}
@@ -242,7 +268,7 @@ def fetch_match_ids(
         f"/lol/match/v5/matches/by-puuid/{puuid}/ids?"
         + urllib.parse.urlencode(params)
     )
-    return get(url, api_key, retries=3)
+    return get(url, api_key, retries=3, data_dir=data_dir, kind="match-list", source_id=f"{region}:{puuid}:{start}:{count}:{queue}")
 
 
 def save_api_key(data_dir: Path, key: str) -> Path:
@@ -464,6 +490,7 @@ def find_account(
     tag_line: str,
     api_key: str,
     log: Any = None,
+    data_dir: Path | None = None,
 ) -> tuple[dict[str, Any], str]:
     """查账号；原样查不到时，自动试易混淆的写法。
 
@@ -477,7 +504,7 @@ def find_account(
                 continue
             tried.append(riot_id)
             try:
-                account = fetch_account(region, name, tag, api_key)
+                account = fetch_account(region, name, tag, api_key, data_dir=data_dir)
             except RiotError as err:
                 if err.status == 404:
                     continue

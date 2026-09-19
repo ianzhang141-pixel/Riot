@@ -19,7 +19,7 @@ def cache_path(data_dir: Path) -> Path:
     return data_dir / "ddragon" / "item_costs.json"
 
 
-def load(data_dir: Path) -> dict[int, int]:
+def load(data_dir: Path, game_version: str | None = None) -> dict[int, int]:
     """读取本地缓存的 {itemId: 总价}。没有缓存就返回空表。"""
     path = cache_path(data_dir)
     if not path.is_file():
@@ -28,6 +28,8 @@ def load(data_dir: Path) -> dict[int, int]:
         with path.open("r", encoding="utf-8") as handle:
             raw = json.load(handle)
     except (OSError, ValueError):
+        return {}
+    if game_version is not None and raw.get("version") != game_version:
         return {}
     costs = raw.get("costs", raw)
     return {int(k): int(v) for k, v in costs.items() if str(k).isdigit()}

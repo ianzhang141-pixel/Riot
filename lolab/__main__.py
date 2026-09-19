@@ -67,7 +67,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             print(f"  ⏭  已存在 {kind}，跳过（加 --overwrite 可重新下载）：{existing[0].source}")
             continue
         try:
-            obj = fetch(region, args.match_id, api_key)
+            obj = fetch(region, args.match_id, api_key, data_dir=data_dir)
         except riot.RiotError as err:
             print(f"  ❌ 下载 {kind} 失败：{err}")
             return 2
@@ -88,7 +88,8 @@ def cmd_state(args: argparse.Namespace) -> int:
         return 2
 
     built = state.build(
-        found["match"][0].data, found["timeline"][0].data, ddragon.load(data_dir)
+        found["match"][0].data, found["timeline"][0].data,
+        ddragon.load(data_dir, found["match"][0].data.get("info", {}).get("gameVersion") or "unknown")
     )
 
     if args.out:
@@ -107,7 +108,20 @@ def cmd_state(args: argparse.Namespace) -> int:
 
 def _print_frame(built: dict, minute: int) -> None:
     frames = built["frames"]
-    frame = min(frames, key=lambda f: abs(f["minute"] - minute))
+    frame = next((f for f in reversed(frames) if f["minute"] <= minute), None)
+    if frame is None:
+        print("该时刻之前没有观测帧。")
+        return
+    from copy import deepcopy
+    frame = deepcopy(frame)
+    for p in frame["players"]:
+        for k, v in p.items():
+            if v is None:
+                p[k] = "未知"
+    for side in frame["teams"].values():
+        for k, v in side.items():
+            if v is None:
+                side[k] = "未知"
     print()
     print("=" * 78)
     print(f"{frame['clock']}   （第 {frame['frameIndex']} 帧）")
@@ -121,7 +135,7 @@ def _print_frame(built: dict, minute: int) -> None:
         f"红方  经济 {red['totalGold']:>6}  击杀 {red['kills']:>2}  塔 {red['towers']}  "
         f"龙 {red['dragons']}  先锋 {red['heralds']}  大龙 {red['barons']}"
     )
-    print(f"经济差（蓝-红）：{frame['diff']['totalGold']:+}")
+    print(f"经济差（蓝-红）：{frame['diff']['totalGold'] if frame['diff']['totalGold'] is not None else '未知'}")
     print("-" * 78)
     header = f"{'':<3}{'英雄':<14}{'位置':<8}{'Lv':>3}{'总金币':>8}{'现金':>7}{'经验':>7}{'CS':>5}{'野怪':>5}   坐标"
     print(header)
@@ -270,6 +284,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--list", action="store_true", help="只列出可用画质，不下载")
     p.set_defaults(func=cmd_huya)
 
+    from .research_cli import register
+    register(sub)
     return parser
 
 
@@ -281,6 +297,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     try:
         return args.func(args)
+    except (ValueError, OSError, riot.RiotError) as err:
+        print(f"❌ {err}", file=sys.stderr)
+        return 2
     except KeyboardInterrupt:
         print("\n已取消。")
         return 130

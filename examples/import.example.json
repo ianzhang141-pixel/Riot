@@ -1,0 +1,25 @@
+{
+  "format": "lolab-import-v1",
+  "source": "replace-with-actual-provider",
+  "apiVersion": "replace-with-verified-api-version",
+  "games": [{
+    "match": "match.json",
+    "timeline": "timeline.json",
+    "context": {
+      "kind": "competitive",
+      "synthetic": true,
+      "league": "LPL",
+      "season": "replace-with-season",
+      "stage": "replace-with-stage",
+      "seriesId": "replace-with-stable-BO3-or-BO5-id",
+      "gameNumber": 1,
+      "startTime": "2026-01-01T00:00:00Z",
+      "status": "completed",
+      "mappingEvidence": "replace-with-source-links-and-identity-verification",
+      "teams": {
+        "100": {"id": "replace-blue-team-id", "name": "replace-blue-team-name"},
+        "200": {"id": "replace-red-team-id", "name": "replace-red-team-name"}
+      }
+    }
+  }]
+}

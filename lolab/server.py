@@ -15,6 +15,10 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import parse_qs, urlsplit
+
+from .archive import Warehouse
+from . import research, discovery
 
 from . import __version__, check, ddragon, net, paths, riot, state, store
 
@@ -140,6 +144,8 @@ def api_set_data_dir(body: dict[str, Any]) -> dict[str, Any]:
     path = Path(raw).expanduser()
     if not path.is_dir():
         return {"ok": False, "message": f"这个路径不存在，或者不是文件夹：{path}"}
+    if CONSOLE.snapshot()["running"]:
+        return {"ok": False, "message": "后台任务进行中，结束后才能切换目录。"}
     CONSOLE.set_data_dir(path.resolve())
     return {"ok": True, "message": f"数据目录已切换到 {path.resolve()}"}
 
@@ -212,7 +218,7 @@ def _fetch_one(
         if found[kind] and not overwrite:
             log(f"  ⏭  {match_id} 的 {kind} 已存在，跳过")
             continue
-        obj = fetch(region, match_id, key)
+        obj = fetch(region, match_id, key, data_dir=data_dir)
         path = store.save(data_dir, kind, match_id, obj)
         changed = True
         log(f"  ✅ {match_id} {kind} → {path.name}")
@@ -244,12 +250,12 @@ def api_sync(body: dict[str, Any]) -> dict[str, Any]:
             log(f"直接使用 PUUID：{puuid[:12]}…")
         else:
             log(f"查询 Riot ID：{game_name}#{tag_line}（{region}）")
-            account, actual = riot.find_account(region, game_name, tag_line, key, log)
+            account, actual = riot.find_account(region, game_name, tag_line, key, log, data_dir=data_dir)
             puuid = account.get("puuid", "")
             log(f"  ✅ {actual} → PUUID：{puuid[:12]}…（这才是稳定身份，改名也不变）")
 
         log(f"拉取最近 {count} 场" + (f"（Queue {queue}）" if queue else "（不限队列）"))
-        match_ids = riot.fetch_match_ids(region, puuid, key, count, queue)
+        match_ids = riot.fetch_match_ids(region, puuid, key, count, queue, data_dir=data_dir)
         log(f"  ✅ 拿到 {len(match_ids)} 个 Match ID")
 
         CONSOLE.progress(0, len(match_ids))
@@ -304,11 +310,53 @@ def api_state(match_id: str) -> dict[str, Any]:
         raise FileNotFoundError(f"本机没有找到 {match_id} 的 Match JSON。")
 
     built = state.build(
-        found["match"][0].data, found["timeline"][0].data, ddragon.load(data_dir)
+        found["match"][0].data, found["timeline"][0].data,
+        ddragon.load(data_dir, found["match"][0].data.get("info", {}).get("gameVersion") or "unknown")
     )
     with CONSOLE.lock:
         CONSOLE.state_cache[match_id] = built
     return built
+
+
+def api_research_action(body: dict[str, Any]) -> dict[str, Any]:
+    assert CONSOLE
+    data_dir = CONSOLE.data_dir
+    action = body.get("action")
+    if action not in ("migrate", "import", "rebuild", "audit", "discover"):
+        raise ValueError("不支持的操作")
+    def work(log):
+        wh = Warehouse(data_dir)
+        if action == "migrate":
+            result = research.migrate_legacy(wh, data_dir)
+        elif action == "import":
+            result = research.import_manifest(wh, body.get("path", ""))
+        elif action == "rebuild":
+            result = {"rebuilt": [g["gameId"] for g in research.rebuild(wh)]}
+        elif action == "discover":
+            config = json.loads(Path(body.get("path", "")).expanduser().read_text())
+            result = discovery.discover(wh, config)
+        else:
+            result = research.validate_lpl(wh)
+        if action == "audit":
+            log(f"验收：{result['status']}；合格 {result['qualifiedGames']} / 10 局。" + "；".join(result["blockers"]))
+        elif action in ("migrate", "import"):
+            log(f"导入 {len(result['imported'])} 局；失败 {len(result['errors'])} 局。")
+            for failure in result["errors"][:20]:
+                log(json.dumps(failure, ensure_ascii=False))
+        else:
+            log(json.dumps(result, ensure_ascii=False))
+    return CONSOLE.start_job(f"研究仓库：{action}", work)
+
+
+def api_research_correct(body):
+    assert CONSOLE
+    # Same job guard as imports prevents a correction racing against a rebuild.
+    data_dir = CONSOLE.data_dir
+    def work(log):
+        game = research.correct(Warehouse(data_dir), str(body.get("gameId", "")),
+                                body.get("patch", {}), str(body.get("author", "")), str(body.get("reason", "")))
+        log(f"修正已记录；重建后质量错误 {game['quality']['errors']} 项。")
+    return CONSOLE.start_job("记录人工修正", work)
 
 
 # ---------------------------------------------------------------- HTTP
@@ -322,10 +370,30 @@ class DebugHandler(BaseHTTPRequestHandler):
     # -- GET --
     def do_GET(self) -> None:  # noqa: N802 - http.server 规定的方法名
         assert CONSOLE
+        if not self._local_request():
+            self._send_json({"error": "仅允许本机访问"}, status=403)
+            return
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        query = {k: v[-1] for k,v in parse_qs(urlsplit(self.path).query).items()}
         try:
             if path == "/":
                 self._send_file(WEB_DIR / "console.html")
+            elif path == "/research":
+                self._send_file(WEB_DIR / "research.html")
+            elif path == "/api/research/status":
+                wh = Warehouse(CONSOLE.data_dir)
+                self._send_json({**wh.overview(), "fixtures": discovery.fixtures(wh), "models": [],
+                                 "modelStatus": "尚未训练；先通过真实 LPL 数据验收"})
+            elif path == "/api/research/games":
+                games = research.selected_games(Warehouse(CONSOLE.data_dir), query)
+                self._send_json({"games": [{k:v for k,v in g.items() if k not in ("frames", "events")} for g in games]})
+            elif path == "/api/research/game":
+                wh = Warehouse(CONSOLE.data_dir)
+                game = wh.game(query.get("id", ""))
+                self._send_json({**game, "corrections": wh.corrections(game["gameId"]),
+                                 "exchanges": research.resource_exchanges(game)})
+            elif path == "/api/research/stats":
+                self._send_json(research.analytics(Warehouse(CONSOLE.data_dir), query))
             elif path.startswith("/match/"):
                 self._send_file(WEB_DIR / "debug.html")
             elif path == "/api/status":
@@ -344,6 +412,8 @@ class DebugHandler(BaseHTTPRequestHandler):
                 self._send_json(check.run(CONSOLE.data_dir, _tail(path)))
             else:
                 self._send_json({"error": "not found"}, status=404)
+        except ValueError as err:
+            self._send_json({"error": str(err)}, status=400)
         except FileNotFoundError as err:
             self._send_json({"error": str(err)}, status=404)
         except Exception as err:  # noqa: BLE001 - 调试服务器，错误要看得见
@@ -351,6 +421,9 @@ class DebugHandler(BaseHTTPRequestHandler):
 
     # -- POST --
     def do_POST(self) -> None:  # noqa: N802
+        if not self._local_request() or self.headers.get("Content-Type", "").split(";")[0] != "application/json":
+            self._send_json({"error": "仅接受本机同源 JSON 请求"}, status=403)
+            return
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
         routes: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
             "/api/datadir": api_set_data_dir,
@@ -359,6 +432,8 @@ class DebugHandler(BaseHTTPRequestHandler):
             "/api/fetch": api_fetch,
             "/api/sync": api_sync,
             "/api/items": api_items,
+            "/api/research/action": api_research_action,
+            "/api/research/correct": api_research_correct,
         }
         handler = routes.get(path)
         if not handler:
@@ -366,19 +441,29 @@ class DebugHandler(BaseHTTPRequestHandler):
             return
         try:
             self._send_json(handler(self._body()))
+        except ValueError as err:
+            self._send_json({"error": str(err)}, status=400)
         except Exception as err:  # noqa: BLE001
             self._send_json({"error": f"{type(err).__name__}: {err}"}, status=500)
+
+    def _local_request(self):
+        host = self.headers.get("Host", "")
+        allowed = {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
+        origin = self.headers.get("Origin")
+        return host in allowed and (origin is None or origin == "http://" + host)
 
     def _body(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length") or 0)
         if length <= 0 or length > MAX_BODY:
-            return {}
+            raise ValueError("请求为空或超过 1 MB")
         raw = self.rfile.read(length)
         try:
             obj = json.loads(raw.decode("utf-8"))
-        except (ValueError, UnicodeDecodeError):
-            return {}
-        return obj if isinstance(obj, dict) else {}
+        except (ValueError, UnicodeDecodeError) as err:
+            raise ValueError("请求必须为有效 JSON") from err
+        if not isinstance(obj, dict):
+            raise ValueError("请求必须为 JSON 对象")
+        return obj
 
     def _send_json(self, payload: Any, status: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")

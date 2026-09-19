@@ -1,0 +1,16 @@
+{
+  "createdAt": "2026-09-18T15:53:54.504282+00:00",
+  "status": "blocked",
+  "requiredGames": 10,
+  "candidateGames": 0,
+  "qualifiedGames": 0,
+  "seriesCount": 0,
+  "checks": [],
+  "sampleGameIds": [],
+  "attestation": {},
+  "blockers": [
+    "不足 10 局真实 LPL，且映射、字段、质量全部合格",
+    "缺少接口发现稳定性、历史范围、限速及保存/模型使用权限的人工核验证据"
+  ],
+  "note": "自动检查验证技术完整性；真实性、来源对照与使用权依赖具名人工核验，报告不代表法律授权。"
+}
