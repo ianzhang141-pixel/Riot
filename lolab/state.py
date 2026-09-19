@@ -14,6 +14,8 @@
 from __future__ import annotations
 
 from typing import Any
+import json
+import math
 
 BLUE, RED = 100, 200
 
@@ -59,6 +61,7 @@ def _new_team_state() -> dict[str, Any]:
         "voidgrubs": 0,
         "atakhans": 0,
         "barons": 0,
+        "elders": 0,
         "wardsPlaced": 0,
         "wardsKilled": 0,
     }
@@ -99,16 +102,15 @@ def _participant_index(match: dict[str, Any], timeline: dict[str, Any]) -> dict[
         puuid = link.get(pid)
         source = by_puuid.get(puuid or "", {})
         if not source:
-            # 没有 puuid 对照时退回按顺序对齐（participantId 1-10 == participants[0-9]）
-            plist = match.get("info", {}).get("participants", []) or []
-            source = plist[pid - 1] if len(plist) >= pid else {}
+            source = next((p for p in match.get("info", {}).get("participants", [])
+                           if p.get("participantId") == pid), {})
         index[pid] = {
             "participantId": pid,
             "puuid": puuid or source.get("puuid"),
             "championName": source.get("championName"),
             "championId": source.get("championId"),
             "role": source.get("teamPosition") or source.get("individualPosition"),
-            "teamId": source.get("teamId") or (BLUE if pid <= 5 else RED),
+            "teamId": source.get("teamId"),
             "riotIdGameName": source.get("riotIdGameName") or source.get("summonerName"),
             "riotIdTagline": source.get("riotIdTagline"),
         }
@@ -123,6 +125,7 @@ def _apply_event(
 ) -> None:
     """把一条事件累加进当前（截至此刻的）状态。"""
     kind = event.get("type")
+    players = {pid: p for pid, p in players.items() if team_of.get(pid) in teams}
 
     if kind == "CHAMPION_KILL":
         victim = event.get("victimId")
@@ -143,6 +146,8 @@ def _apply_event(
     elif kind == "BUILDING_KILL":
         # teamId 是「被拆掉的建筑所属队伍」，功劳记给对面
         loser = event.get("teamId")
+        if loser not in teams:
+            return
         winner = RED if loser == BLUE else BLUE
         building = event.get("buildingType")
         if building == "TOWER_BUILDING":
@@ -152,6 +157,8 @@ def _apply_event(
 
     elif kind == "TURRET_PLATE_DESTROYED":
         loser = event.get("teamId")
+        if loser not in teams:
+            return
         winner = RED if loser == BLUE else BLUE
         teams[winner]["plates"] += 1
 
@@ -239,22 +246,46 @@ def build(
     blue_win = None
     for team in match_info.get("teams", []) or []:
         if team.get("teamId") == BLUE:
-            blue_win = bool(team.get("win"))
+            blue_win = team.get("win") if isinstance(team.get("win"), bool) else None
 
     players = {pid: _new_player_state() for pid in range(1, 11)}
     teams = {BLUE: _new_team_state(), RED: _new_team_state()}
 
+    raw_frames = tl_info.get("frames", []) or []
+    # Timestamp is authoritative; a future-dated event in an earlier frame must wait.
+    pending, seen = [], set()
+    for frame in raw_frames:
+        for event in frame.get("events", []) or []:
+            stamp = number(event.get("timestamp"))
+            if stamp is None or stamp < 0:
+                continue
+            key = json.dumps(event, sort_keys=True, separators=(",", ":"))
+            if key not in seen:
+                seen.add(key)
+                pending.append(event)
+    pending.sort(key=lambda event: event["timestamp"])
+    cursor = 0
     frames_out: list[dict[str, Any]] = []
-    for frame_index, frame in enumerate(tl_info.get("frames", []) or []):
-        timestamp = int(frame.get("timestamp", 0))
-
-        # 1) 先累加「这一帧之前」发生的事件
+    valid_frames = sorted((f for f in raw_frames if number(f.get("timestamp")) is not None
+                           and f["timestamp"] >= 0), key=lambda f: f["timestamp"])
+    interval = number(tl_info.get("frameInterval")) or 60000
+    cumulative_complete = bool(valid_frames and valid_frames[0]["timestamp"] == 0)
+    previous_timestamp = None
+    for frame_index, frame in enumerate(valid_frames):
+        timestamp = int(frame["timestamp"])
+        if previous_timestamp is not None and timestamp <= previous_timestamp:
+            continue
+        cumulative_complete = cumulative_complete and isinstance(frame.get("events"), list)
+        if previous_timestamp is not None and timestamp - previous_timestamp > interval * 1.5:
+            cumulative_complete = False
+        previous_timestamp = timestamp
         raw_events = frame.get("events", []) or []
         recent: list[dict[str, Any]] = []
-        for event in raw_events:
+        while cursor < len(pending) and pending[cursor]["timestamp"] <= timestamp:
+            event = pending[cursor]
             _apply_event(event, players, teams, team_of)
-            if event.get("type") in TRACKED_EVENTS:
-                recent.append({**event, "clock": _clock(int(event.get("timestamp", timestamp)))})
+            recent.append({**event, "clock": _clock(int(event["timestamp"]))})
+            cursor += 1
 
         # 2) 再拍下这一帧的快照
         pframes = frame.get("participantFrames", {}) or {}
@@ -267,22 +298,22 @@ def build(
             snapshot = pframes.get(str(pid)) or pframes.get(pid) or {}
             position = snapshot.get("position") or {}
             items = list(players[pid]["items"])
-            item_gold = sum(item_costs.get(i, 0) for i in items) if item_costs else None
-            lane_cs = int(snapshot.get("minionsKilled", 0) or 0)
-            jungle_cs = int(snapshot.get("jungleMinionsKilled", 0) or 0)
+            item_gold = sum(item_costs[i] for i in items) if item_costs and all(i in item_costs for i in items) and cumulative_complete else None
+            lane_cs = number(snapshot.get("minionsKilled"))
+            jungle_cs = number(snapshot.get("jungleMinionsKilled"))
             entry = {
                 **index[pid],
-                "level": int(snapshot.get("level", 0) or 0),
-                "xp": int(snapshot.get("xp", 0) or 0),
-                "totalGold": int(snapshot.get("totalGold", 0) or 0),
-                "currentGold": int(snapshot.get("currentGold", 0) or 0),
+                "level": number(snapshot.get("level")),
+                "xp": number(snapshot.get("xp")),
+                "totalGold": number(snapshot.get("totalGold")),
+                "currentGold": number(snapshot.get("currentGold")),
                 "goldPerSecond": snapshot.get("goldPerSecond"),
-                "cs": lane_cs + jungle_cs,
+                "cs": lane_cs + jungle_cs if lane_cs is not None and jungle_cs is not None else None,
                 "laneCs": lane_cs,
                 "jungleCs": jungle_cs,
                 "x": position.get("x"),
                 "y": position.get("y"),
-                "items": items,
+                "items": items if cumulative_complete else None,
                 "itemGold": item_gold,
                 "kills": players[pid]["kills"],
                 "deaths": players[pid]["deaths"],
@@ -294,25 +325,29 @@ def build(
             }
             players_out.append(entry)
 
-            side = team_agg[team_of[pid]]
-            side["totalGold"] += entry["totalGold"]
-            side["currentGold"] += entry["currentGold"]
-            side["xp"] += entry["xp"]
-            side["level"] += entry["level"]
-            side["cs"] += entry["cs"]
-            side["jungleCs"] += entry["jungleCs"]
-            if item_gold is not None:
-                side["itemGold"] += item_gold
+        for side in (BLUE, RED):
+            members = [p for p in players_out if p["teamId"] == side]
+            for key in team_agg[side]:
+                values = [p.get(key) for p in members]
+                team_agg[side][key] = sum(values) if len(values) == 5 and all(v is not None for v in values) else None
+        if not cumulative_complete:
+            for player in players_out:
+                for key in ("kills", "deaths", "assists", "wardsPlaced", "wardsKilled", "skillPoints"):
+                    player[key] = None
 
         teams_out = {
             str(side): {**_snapshot_team(teams[side]), **team_agg[side]}
             for side in (BLUE, RED)
         }
+        if not cumulative_complete:
+            for side in teams_out.values():
+                for key in _new_team_state():
+                    side[key] = None
         blue, red = teams_out[str(BLUE)], teams_out[str(RED)]
         diff = {
-            key: blue[key] - red[key]
+            key: blue[key] - red[key] if blue[key] is not None and red[key] is not None else None
             for key in ("totalGold", "xp", "level", "cs", "kills", "towers", "plates",
-                        "dragons", "heralds", "voidgrubs", "barons", "inhibitors",
+                        "dragons", "heralds", "voidgrubs", "barons", "elders", "atakhans", "inhibitors",
                         "wardsPlaced", "wardsKilled")
         }
 
@@ -326,6 +361,7 @@ def build(
                 "teams": teams_out,
                 "diff": diff,
                 "eventCountRaw": len(raw_events),
+                "cumulativeComplete": cumulative_complete,
                 "recentEvents": recent,
             }
         )
@@ -353,3 +389,8 @@ def _snapshot_team(state: dict[str, Any]) -> dict[str, Any]:
     out = dict(state)
     out["dragonTypes"] = list(state["dragonTypes"])
     return out
+
+
+def number(value):
+    """Unknown is never zero; bool, non-finite and malformed values are unknown."""
+    return value if type(value) in (int, float) and math.isfinite(value) else None

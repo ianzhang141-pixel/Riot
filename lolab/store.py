@@ -116,6 +116,8 @@ def scan_sqlite(data_dir: Path, match_id: str) -> list[Found]:
         for p in data_dir.rglob(pattern)
     ]
     for db_path in sorted(set(db_files)):
+        if db_path.name == "warehouse.sqlite3":
+            continue
         try:
             conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         except sqlite3.Error:
@@ -172,6 +174,14 @@ def scan_sqlite(data_dir: Path, match_id: str) -> list[Found]:
 def locate(data_dir: Path, match_id: str) -> dict[str, list[Found]]:
     """返回 {"match": [...], "timeline": [...]}，包含 JSON 和 SQLite 两种来源。"""
     found = scan_json(data_dir, match_id) + scan_sqlite(data_dir, match_id)
+    archive_path = data_dir / "research" / "warehouse.sqlite3"
+    if archive_path.is_file():
+        from .archive import Warehouse
+        wh = Warehouse(data_dir)
+        for kind in ("match", "timeline"):
+            row = wh.latest_response(match_id, kind, "riot-match-v5")
+            if row:
+                found.insert(0, Found(kind, match_id, f"archive:{row['id']}", json.loads(wh.raw(row["id"]))))
     grouped: dict[str, list[Found]] = {"match": [], "timeline": []}
     for item in found:
         grouped[item.kind].append(item)
@@ -183,19 +193,30 @@ def list_match_ids(data_dir: Path) -> list[str]:
     found = scan_json(data_dir)
     with_timeline = {f.match_id for f in found if f.kind == "timeline"}
     all_ids = {f.match_id for f in found}
+    if (data_dir / "research" / "warehouse.sqlite3").is_file():
+        from .archive import Warehouse
+        with Warehouse(data_dir).connect() as db:
+            all_ids.update(r[0] for r in db.execute("SELECT DISTINCT source_id FROM responses WHERE source='riot-match-v5' AND kind IN ('match','timeline') AND status=200"))
     return sorted(with_timeline) + sorted(all_ids - with_timeline)
 
 
 def save(data_dir: Path, kind: str, match_id: str, obj: dict[str, Any]) -> Path:
-    """把 Match / Timeline 写入 data/matches/ 或 data/timelines/。"""
-    sub = "matches" if kind == "match" else "timelines"
-    target_dir = data_dir / sub
-    target_dir.mkdir(parents=True, exist_ok=True)
-    suffix = ".json" if kind == "match" else ".timeline.json"
-    path = target_dir / f"{match_id}{suffix}"
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump(obj, handle, ensure_ascii=False)
-    return path
+    """Append a new observation; duplicate bytes share one compressed blob.
+
+    Legacy callers pass decoded JSON, so fidelity is marked reserialized-json.
+    Network callers with data_dir archive response bytes before decoding.
+    """
+    from .archive import Warehouse, dumps
+    if kind not in ("match", "timeline"):
+        raise ValueError("不支持的数据类型")
+    if match_id_of(obj) != match_id:
+        raise ValueError("返回比赛 ID 与请求不一致")
+    wh = Warehouse(data_dir)
+    latest = wh.latest_response(match_id, kind, "riot-match-v5")
+    if latest is None or json.loads(wh.raw(latest["id"])) != obj:
+        wh.capture(dumps(obj).encode(), source="riot-match-v5", kind=kind, source_id=match_id,
+                   endpoint="legacy:store.save", api_version="v5", fidelity="reserialized-json")
+    return wh.path
 
 
 # ---------------------------------------------------------------- 快速盘点
@@ -258,6 +279,12 @@ def inventory(data_dir: Path) -> dict[str, Any]:
         }
     )
 
+    if (data_dir / "research" / "warehouse.sqlite3").is_file():
+        from .archive import Warehouse
+        with Warehouse(data_dir).connect() as db:
+            rows = db.execute("SELECT source_id,kind,MAX(id) FROM responses WHERE source='riot-match-v5' AND kind IN ('match','timeline') AND status=200 GROUP BY source_id,kind")
+            for mid, kind, ref in rows:
+                (matches if kind == "match" else timelines)[mid] = f"archive:{ref}"
     all_ids = sorted(set(matches) | set(timelines), reverse=True)
     return {
         "matches": [

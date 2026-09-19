@@ -74,7 +74,7 @@ const MAP_MIN = -120, MAP_MAX = 14870;   // 召唤师峡谷 Timeline 坐标范�
 let STATE = null, idx = 0;
 
 const fmt = n => (n === null || n === undefined) ? '—' : n.toLocaleString('en-US');
-const sign = n => (n > 0 ? '+' : '') + fmt(n);
+const sign = n => n == null ? '未知' : (n > 0 ? '+' : '') + fmt(n);
 
 document.getElementById('title').textContent = MATCH_ID;
 
@@ -177,17 +177,17 @@ function show(i) {
 
   const gd = d.totalGold;
   document.getElementById('score').innerHTML = [
-    `<span class="chip"><b class="blue">蓝 ${B.kills}</b> : <b class="red">${R.kills} 红</b></span>`,
+    `<span class="chip"><b class="blue">蓝 ${fmt(B.kills)}</b> : <b class="red">${fmt(R.kills)} 红</b></span>`,
     `<span class="chip">经济差 <b class="${gd >= 0 ? 'blue' : 'red'}">${sign(gd)}</b>
        <span class="prob">(${fmt(B.totalGold)} / ${fmt(R.totalGold)})</span></span>`,
     `<span class="chip">经验差 <b>${sign(d.xp)}</b></span>`,
-    `<span class="chip">塔 <b class="blue">${B.towers}</b>:<b class="red">${R.towers}</b></span>`,
-    `<span class="chip">镀层 <b class="blue">${B.plates}</b>:<b class="red">${R.plates}</b></span>`,
-    `<span class="chip">小龙 <b class="blue">${B.dragons}</b>:<b class="red">${R.dragons}</b></span>`,
-    `<span class="chip">先锋 <b class="blue">${B.heralds}</b>:<b class="red">${R.heralds}</b></span>`,
-    `<span class="chip">虚空幼虫 <b class="blue">${B.voidgrubs}</b>:<b class="red">${R.voidgrubs}</b></span>`,
-    `<span class="chip">大龙 <b class="blue">${B.barons}</b>:<b class="red">${R.barons}</b></span>`,
-    `<span class="chip">水晶 <b class="blue">${B.inhibitors}</b>:<b class="red">${R.inhibitors}</b></span>`,
+    `<span class="chip">塔 <b class="blue">${fmt(B.towers)}</b>:<b class="red">${fmt(R.towers)}</b></span>`,
+    `<span class="chip">镀层 <b class="blue">${fmt(B.plates)}</b>:<b class="red">${fmt(R.plates)}</b></span>`,
+    `<span class="chip">小龙 <b class="blue">${fmt(B.dragons)}</b>:<b class="red">${fmt(R.dragons)}</b></span>`,
+    `<span class="chip">先锋 <b class="blue">${fmt(B.heralds)}</b>:<b class="red">${fmt(R.heralds)}</b></span>`,
+    `<span class="chip">虚空幼虫 <b class="blue">${fmt(B.voidgrubs)}</b>:<b class="red">${fmt(R.voidgrubs)}</b></span>`,
+    `<span class="chip">大龙 <b class="blue">${fmt(B.barons)}</b>:<b class="red">${fmt(R.barons)}</b></span>`,
+    `<span class="chip">水晶 <b class="blue">${fmt(B.inhibitors)}</b>:<b class="red">${fmt(R.inhibitors)}</b></span>`,
     B.dragonSoul ? `<span class="chip blue">蓝方龙魂 ${B.dragonSoul}</span>` : '',
     R.dragonSoul ? `<span class="chip red">红方龙魂 ${R.dragonSoul}</span>` : '',
   ].join('');
@@ -198,15 +198,15 @@ function show(i) {
       <td>${p.participantId}</td>
       <td>${p.championName || '?'}</td>
       <td>${p.role || '—'}</td>
-      <td>${p.level}</td>
+      <td>${fmt(p.level)}</td>
       <td>${fmt(p.totalGold)}</td>
       <td>${fmt(p.currentGold)}</td>
       <td>${fmt(p.xp)}</td>
-      <td>${p.laneCs}</td>
-      <td>${p.jungleCs}</td>
+      <td>${fmt(p.laneCs)}</td>
+      <td>${fmt(p.jungleCs)}</td>
       <td>${p.itemGold === null ? '—' : fmt(p.itemGold)}</td>
-      <td>${p.kills}/${p.deaths}/${p.assists}</td>
-      <td>${p.wardsPlaced}</td>
+      <td>${fmt(p.kills)}/${fmt(p.deaths)}/${fmt(p.assists)}</td>
+      <td>${fmt(p.wardsPlaced)}</td>
       <td class="${noPos ? 'miss' : ''}">${noPos ? '缺失' : p.x + ' / ' + p.y}</td>
     </tr>`;
   }).join('');

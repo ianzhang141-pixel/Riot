@@ -1,73 +1,44 @@
-# LOL PC 决策实验室 · 数据工具箱（lolab）
+# LOLAB · 比赛数据研究台
 
-配合本地网站「LOL PC 决策实验室 / Riot API V0.1」使用的命令行工具箱。
+面向真实 LoL 比赛数据的本地研究工具。当前版本 **0.2.0**：先验证数据来源，再做可追溯的描述分析。**尚未通过十局真实 LPL 验收，尚未训练胜率或决策模型。** 普通 Riot Match-V5 数据、职业比赛和合成测试数据严格区分。
 
-只做一件事：**先把真实数据验证清楚，再谈胜率模型。**
-本仓库内**不存在**任何假装已经训练好的 V(s) / Q(s,a) 模型。
-
-- 只用 Python 标准库，Mac 自带 `python3` 就能跑，不需要 pip 安装
-- 不修改现有项目，只读取项目的 `data/` 目录（JSON 与 SQLite 都会扫）
-- 控制台跑在 8010 端口，只监听 127.0.0.1，和现有的 8000 网站互不影响
-- API Key 只写进本机 `data/riot_secret.json`（权限 600），页面上只显示遮蔽形式
-
-## 文档
-
-| 文档 | 给谁看 |
-| --- | --- |
-| [项目状态.md](项目状态.md) | **AI 交接文档 —— 接手前先读这个** |
-| [CHANGELOG.md](CHANGELOG.md) | 每次改了什么、验证到什么程度 |
-| [docs/终端怎么用.md](docs/终端怎么用.md) | 用户：终端零基础入门（不讲项目，只讲怎么操作） |
-| [docs/使用说明.md](docs/使用说明.md) | 用户：分步操作指南 |
-
-## 快速开始
-
-**零基础分步操作指南（推荐先看这个）：[docs/使用说明.md](docs/使用说明.md)**
-
-只需要一条命令，其余全部在浏览器里点：
+只依赖 Python 3.10+ 标准库，不需要 pip、Node、数据库服务或 Docker。Mac 不保证预装 Python；安装与每一步点击操作见 [LPL 使用说明](docs/LPL使用说明.md)。
 
 ```bash
-python3 -m lolab serve      # 打开 http://127.0.0.1:8010
+python3 -m lolab serve
 ```
 
-网页控制台上可以：选数据目录（支持自动查找）、填 / 验证 Riot API Key、
-按 Riot ID 同步最近 N 场（**Match 和 Timeline 两个接口都抓**）、
-单场补下载 Timeline、逐分钟核对 State。
+打开 <http://127.0.0.1:8010/research>。旧版 Riot 下载控制台仍在 <http://127.0.0.1:8010/>。已有数据目录可在旧控制台选择，或用 `python3 -m lolab --data "/完整路径/data" serve` 指定；全局 `--data` 放在子命令前。
 
-也可以全部用终端：
+## 已实现
+
+- Riot 账号、对局列表、详情与时间线采集存档；有界重试、按来源限速、持久化 Retry-After 与失败断点。重复运行跳过已有详情/时间线，重新下载追加新响应。
+- 完整响应字节 gzip 压缩保存，SHA-256 校验与数据体去重；请求时间、来源、接口版本、响应码、脱敏地址留档。SQLite 触发器阻止修改/删除原始记录。
+- Match-V5 标准化：十人状态、独立资源计数、事件去重、真实时间戳排序、缺失值保留 null。原始数据、派生版本、特征导出、修正历史分层。
+- 连续性、身份对应、经济/经验/等级/补刀单调性、比分/资源一致性、重赛/投降/中断标记与逐局质量报告。
+- 本机管理页面：比赛筛选、时间线、经济/资源曲线、选手状态、异常定位、具名人工修正、原始溯源和任务状态。
+- 领先转化率、经济差分桶、英雄/选手胜负、战队描述统计、资源交换窗口、三千经济以上逆风翻盘筛选。按赛事类型、赛事、版本分组，显示样本量；排除质量错误及合成数据。
+- 可选 PandaScore LPL 赛程发现：需独立 token 和核实的 leagueId；支持分页、断点、重复发现、命令行周期运行。**只代表赛程接入，未验证真实账号与历史时间线覆盖。**
+- 十局 LPL 验收报告：技术检查 + 具名人工来源/权限证据；证据不足时 blocked。特征仅取指定时刻之前，按整场/系列赛/日期划分训练与测试。
+
+## 当前边界
+
+Riot Developer Portal 的 Key 不能自动证明具有 LPL 职业赛事访问权。没有用户的职业数据凭证和十局真实样本，本版本不会宣称覆盖验证完成。GRID 原生适配器、完整职业时间线自动采集仍待取得真实接口样本后开发。现有导入适配器只接受 Match-V5 结构；不能把 GRID/PandaScore JSON 改名后当作 Match-V5。
+
+模型训练、校准与评估、相似局面检索、团战/决策分类、阵容协同和因果决策价值属于后续阶段。当前页面不显示虚构预测。仓库内旧 `lol_decision_lab_v0_1_riot_api.zip` 保留为历史参考，本次更新的是 `lolab/`；ZIP 内旧项目的已知问题没有被此更新修复。
+
+## 文档与开发验证
+
+- [使用步骤、导入格式、修正及备份](docs/LPL使用说明.md)
+- [数据源验证结论与证据](docs/数据源验证.md)
+- [分层结构与接口契约](docs/数据架构.md)
+- [项目状态](项目状态.md) · [路线图](路线图.md) · [变更记录](CHANGELOG.md)
 
 ```bash
-python3 -m lolab where  --data "你的项目/data"        # 认的是哪个 data 目录
-python3 -m lolab check  KR_8368663855                # Timeline 完整性检查
-python3 -m lolab fetch  KR_8368663855                # 从 Riot API 补下载
-python3 -m lolab items                               # 更新装备价格表
-python3 -m lolab state  KR_8368663855 --minute 10    # Timeline → 分钟级 State
-python3 -m lolab huya   "虎牙录像地址" --workers 3     # 录像下载（批量 / 并发）
+python3 -m unittest discover -v
+python3 -m lolab --data ./data research audit
 ```
 
-## 模块
+测试采用明确标识的合成样本和模拟 HTTP 响应，不是 LPL 实测证明。第二条命令在缺少真实样本时返回退出码 1，这是验收未通过的正确结果。
 
-| 文件 | 作用 |
-| --- | --- |
-| `paths.py` | 定位项目的 `data/` 目录 |
-| `store.py` | 在 `data/` 里扫描 / 保存 Match 与 Timeline（不假设目录结构） |
-| `check.py` | Timeline 数据完整性检查，输出中文报告 |
-| `riot.py` | Riot API 最小客户端（Key 只从本机读，绝不打印） |
-| `ddragon.py` | Data Dragon 装备价格表，用于计算装备价值 |
-| `state.py` | **Timeline → 分钟级 State**，严格无未来信息泄漏 |
-| `server.py` + `web/console.html` | 网页控制台：数据目录 / API Key / 同步 / 补下载 |
-| `web/debug.html` | Timeline / State 逐分钟调试页（含小地图） |
-| `huya.py` | 虎牙录像 URL → m3u8 → 最高画质 → FFmpeg → MP4 |
-
-## 关于「无未来信息泄漏」
-
-Timeline 里第 i 帧的 `events` 是第 i-1 帧到第 i 帧之间发生的事。
-`state.build()` 因此严格按「先累加本帧事件，再拍下本帧快照」的顺序处理，
-任何一帧的 State 只含该时刻及之前可观测的信息。
-
-唯一的例外是 `meta.blueWin` —— 它是将来训练 V(s) 的**标签**，
-不属于 State 特征，构造特征时必须排除。
-
-## 还没做的部分
-
-V(s) 胜率模型、胜率曲线、行为抽象、Q(s,a)、Regret 都**尚未实现**。
-先完成数据核对，再开始建模。
+GitHub Actions 配置示例见 [github-actions.example.yml](docs/github-actions.example.yml)。当前 GitHub 连接缺少 workflow scope，未启用远端 CI；本次已在本机运行测试。具有工作流写权限后可将示例放入 `.github/workflows/tests.yml` 启用 Python 3.10/3.13 检查。
